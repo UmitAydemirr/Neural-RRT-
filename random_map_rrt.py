@@ -14,9 +14,9 @@ from joblib import Parallel, delayed
 import multiprocessing
 
 
-# hedef_harita_sayisi = 10000
-hedef_harita_sayisi = 30
-Max_iterasyon = 2000
+hedef_harita_sayisi = 10000
+# hedef_harita_sayisi = 30
+Max_iterasyon = 5000
 
 class Node:
     def __init__(self, x, y):
@@ -58,13 +58,15 @@ class Harita:
         self.engel_daire = np.array(self.engel_daire) if self.engel_daire else np.zeros((0, 3))
         self.engel_dikdortgen = np.array(self.engel_dikdortgen) if self.engel_dikdortgen else np.zeros((0, 4))
 
-    def carpisma_kontrol(self,x,y, padding=10.0):
+    def carpisma_kontrol(self,x,y, padding=5.0):
         if len(self.engel_daire) > 0:
             dx = self.engel_daire[:, 0] - x
             dy = self.engel_daire[:, 1] - y
             d2 = dx*dx + dy*dy
-            if np.any(d2 <= (self.engel_daire[:, 2])**2):
+            guvenli_mesafe_karesi = (self.engel_daire[:, 2] + padding)**2
+            if np.any(d2 <= guvenli_mesafe_karesi):
                 return True
+            
         if len(self.engel_dikdortgen) > 0:
             ox = self.engel_dikdortgen[:, 0]
             oy = self.engel_dikdortgen[:, 1]
@@ -76,7 +78,7 @@ class Harita:
                 return True
         return False
     
-    def kenar_carpisma_kontrol(self, x1, y1, x2, y2, padding=10.0):
+    def kenar_carpisma_kontrol(self, x1, y1, x2, y2, padding=5.0):
         mesafe = math.hypot(x2 - x1, y2 - y1)
         adim_sayisi = 1
         if mesafe < adim_sayisi:
@@ -90,17 +92,26 @@ class Harita:
                 return True
         return False
     def baslangic_bitis_olustur(self):
-        while True:
+        deneme_limiti = 5000
+        sayac = 0
+        while sayac < deneme_limiti:
             baslangic = [random.uniform(5,self.width-5), random.uniform(5,self.height-5)]
-            if not self.carpisma_kontrol(baslangic[0], baslangic[1], padding=10.0):
+            if not self.carpisma_kontrol(baslangic[0], baslangic[1], padding=5.0):
                 self.baslangic = Node(baslangic[0], baslangic[1])
                 break
-        while True:
+            sayac += 1
+        else:
+            return False
+        sayac = 0
+        while sayac < deneme_limiti:
             bitis = [random.uniform(5,self.width-5), random.uniform(5,self.height-5)]
             mesafe = math.hypot(bitis[0]-self.baslangic.x, bitis[1]-self.baslangic.y)
-            if not self.carpisma_kontrol(bitis[0], bitis[1], padding=10.0) and mesafe > 100:
+            if not self.carpisma_kontrol(bitis[0], bitis[1], padding=5.0) and mesafe > 100:
                 self.hedef = Node(bitis[0], bitis[1])
                 break
+            sayac += 1
+        else:
+            return False
     def data_kayıt(self, dosya_adi, rrt_yolu):
         data = {
             "harita_boyut": { "genislik": self.width, "yukseklik": self.height  },
@@ -128,17 +139,17 @@ class Harita:
             elif engel[0] == 'dikdortgen':
                 rect = patches.Rectangle((engel[1], engel[2]), engel[3], engel[4], color='gray')
                 ax.add_patch(rect)
-        ax.plot(self.baslangic.x, self.baslangic.y, 'go', color='green', markersize=8)
-        ax.plot(self.hedef.x, self.hedef.y, 'rx', color='red', markersize=8)
+        ax.plot(self.baslangic.x, self.baslangic.y, 'go',  markersize=8)
+        ax.plot(self.hedef.x, self.hedef.y, 'rx', markersize=8)
         if rrt_yolu:
             yol = np.array(rrt_yolu)
-            ax.plot(yol[:,0], yol[:,1], '-b', color='red', linewidth=1)
+            ax.plot(yol[:,0], yol[:,1], '-b', linewidth=1)
         plt.axis('off')
         plt.savefig(f"dataset/{dosya_adi}.png")
         plt.close(fig)
 
 class BRRTStar:
-    def __init__(self, harita, genisleme_mesafesi=4.0, max_iterasyon=3000, padding=10.0):
+    def __init__(self, harita, genisleme_mesafesi=4.0, max_iterasyon=5000, padding=5.0):
         self.env = harita
         self.genisleme_mesafesi = genisleme_mesafesi
         self.max_iterasyon = max_iterasyon
@@ -153,7 +164,6 @@ class BRRTStar:
         self.end_kdtree = cKDTree(self.end_coords)
         min_total_cost = float("inf")
         best_path = None
-
         for i in range(self.max_iterasyon):
             rnd_node = self.get_random_node()
             if i % 2 == 0:
@@ -303,45 +313,78 @@ class BRRTStar:
     def calc_dist(n1, n2): return math.hypot(n1.x - n2.x, n1.y - n2.y)
 
 def process_single_map(map_id):
-    env = Harita()
-    env.rastgele_engel_ekle()
-    env.baslangic_bitis_olustur()
-    solver = BRRTStar(env, max_iterasyon=Max_iterasyon, padding=10.0)
-    path = solver.planning()
-    if path is not None:
-        filename = f"map_{map_id}"
-        env.data_kayıt(filename, path)
-        if hedef_harita_sayisi == 10000:
-            if map_id % 500 == 0: 
+    try:
+        env = Harita()
+        env.rastgele_engel_ekle()
+        env.baslangic_bitis_olustur()
+        solver = BRRTStar(env, max_iterasyon=Max_iterasyon, padding=5.0)
+        path = solver.planning()
+        if path is not None:
+            filename = f"map_{map_id}"
+            env.data_kayıt(filename, path)
+            if hedef_harita_sayisi == 10000:
+                if map_id % 500 == 0: 
+                    env.harita_gorsel(filename, path)
+            elif hedef_harita_sayisi <= 100:
                 env.harita_gorsel(filename, path)
-        elif hedef_harita_sayisi <= 100:
-            env.harita_gorsel(filename, path)
-        else:
-            if map_id % 50 == 0:
-                env.harita_gorsel(filename, path)
+            else:
+                if map_id % 50 == 0:
+                    env.harita_gorsel(filename, path)
 
-        return True
-    return False
+            return True
+        else:
+            return False
+    except Exception as e:
+        print(f"Error processing map {map_id}: {e}")
+        return False
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
+    
     cekirdek_sayisi = multiprocessing.cpu_count()
-    kullanilacak_cekirdek_sayisi = max(1, cekirdek_sayisi - 2)
+    kullanilacak_cekirdek_sayisi = max(1, cekirdek_sayisi//2) 
+    
     print(f"Cekirdek Sayisi: {cekirdek_sayisi}")
     print(f"Kullanilacak Cekirdek Sayisi: {kullanilacak_cekirdek_sayisi}")
+
     if not os.path.exists("dataset"):
         os.makedirs("dataset")
-    dosyalar = glob.glob("dataset/map_*.json")    
-    baslangic_sayisi = 0
+
+    dosyalar = glob.glob("dataset/map_*.json")
+    
+    mevcut_dosya_sayisi = len(dosyalar)
+    
+    en_son_id = 0
     if dosyalar:
         icerik = [int(os.path.basename(f).replace("map_", "").replace(".json", "")) for f in dosyalar if "map_" in f]
-        if icerik: baslangic_sayisi = max(icerik) + 1
-    print(f"Baslangic Sayisi: {baslangic_sayisi}")
+        if icerik: 
+            en_son_id = max(icerik)
+    
+    baslangic_id = en_son_id + 1
+
+    print(f"Mevcut Dosya Sayisi (Adet): {mevcut_dosya_sayisi}")
+    print(f"En Son Dosya ID'si: map_{en_son_id}")
+    print(f"Yeni Dosyalar map_{baslangic_id} isminden baslayacak.")
     print(f"Hedef Harita Sayisi: {hedef_harita_sayisi}")
-    gerekli_sayi = hedef_harita_sayisi - baslangic_sayisi
+
+    gerekli_sayi = hedef_harita_sayisi - mevcut_dosya_sayisi
+
     if gerekli_sayi > 0:
-        sonuclar = Parallel(n_jobs=kullanilacak_cekirdek_sayisi,verbose=5)(delayed(process_single_map)(i) for i in range(baslangic_sayisi, baslangic_sayisi + gerekli_sayi))
-        basari_sayisi = sum(sonuclar)
-        print(f"Basariyla Olusturulan Harita Sayisi: {basari_sayisi}/{gerekli_sayi}")
+        print(f"Gereken Harita Sayisi: {gerekli_sayi} adet üretilecek...")
+        
+        aralik = range(baslangic_id, baslangic_id + gerekli_sayi)
+        
+        sonuclar = Parallel(n_jobs=kullanilacak_cekirdek_sayisi, verbose=5)(
+            delayed(process_single_map)(i) for i in aralik
+        )
+        
+        basari_sayisi = sonuclar.count(True)
+        
+        toplam_var_olan = mevcut_dosya_sayisi + basari_sayisi
+        print(f"Bu turda basariyla olusturulan: {basari_sayisi}")
+        print(f"Toplam Veri Seti Boyutu: {toplam_var_olan}/{hedef_harita_sayisi}")
+        
+        if toplam_var_olan < hedef_harita_sayisi:
+            print("Not: Hatalı haritalar nedeniyle hedef sayiya ulasilamadi. Programi tekrar çalıştır.")
     else:
-        print("Hedef harita sayisina ulasildi.")
+        print("Hedef harita sayisina zaten ulasilmis veya gecilmis.")
