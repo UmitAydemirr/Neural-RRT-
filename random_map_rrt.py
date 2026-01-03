@@ -322,14 +322,14 @@ def process_single_map(map_id):
         if path is not None:
             filename = f"map_{map_id}"
             env.data_kayıt(filename, path)
-            if hedef_harita_sayisi == 10000:
-                if map_id % 500 == 0: 
-                    env.harita_gorsel(filename, path)
-            elif hedef_harita_sayisi <= 100:
-                env.harita_gorsel(filename, path)
-            else:
-                if map_id % 50 == 0:
-                    env.harita_gorsel(filename, path)
+            # if hedef_harita_sayisi == 10000:
+            #     if map_id % 500 == 0: 
+            #         env.harita_gorsel(filename, path)
+            # elif hedef_harita_sayisi <= 100:
+            #     env.harita_gorsel(filename, path)
+            # else:
+            #     if map_id % 50 == 0:
+            #         env.harita_gorsel(filename, path)
 
             return True
         else:
