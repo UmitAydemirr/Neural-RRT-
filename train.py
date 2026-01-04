@@ -4,10 +4,30 @@ from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.loader import DataLoader
 from pathlib import Path
 from model import NeuralPlannerGAT
+from tqdm import tqdm
+import time
+import os
 
 DATA_DIR = Path(__file__).parent / "processed_tensors"
-CHECKPOINT_DIR = Path(__file__).parent / "checkpoints"
+LOCAL_CHECKPOINT_DIR = Path(__file__).parent / "checkpoints"
 LOG_DIR = Path(__file__).parent / "runs"
+
+def is_colab():
+    try:
+        import google.colab
+        return True
+    except ImportError:
+        return os.path.exists('/content')
+
+IS_COLAB = is_colab()
+if IS_COLAB:
+    DRIVE_CHECKPOINT_DIR = Path("/content/drive/MyDrive/GAT_Checkpoints")
+    DRIVE_CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    CHECKPOINT_DIR = DRIVE_CHECKPOINT_DIR
+    print(f"Colab detected. Checkpoints will be saved to: {CHECKPOINT_DIR}")
+else:
+    CHECKPOINT_DIR = LOCAL_CHECKPOINT_DIR
+    print(f"Local mode. Checkpoints will be saved to: {CHECKPOINT_DIR}")
 
 
 class PathPlannerLoss(nn.Module):
@@ -172,7 +192,9 @@ class Trainer:
         successes = 0
         total_steps = 0
         
-        for batch_idx, data in enumerate(dataloader):
+        pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}", leave=True)
+        
+        for batch_idx, data in enumerate(pbar):
             loss, components, success, steps = self.train_episode(data)
             
             total_loss += loss
@@ -182,6 +204,15 @@ class Trainer:
             total_steps += steps
             
             self.global_step += 1
+            
+            if batch_idx % 10 == 0:
+                current_success_rate = successes / (batch_idx + 1)
+                current_avg_loss = total_loss / (batch_idx + 1)
+                pbar.set_postfix({
+                    'loss': f'{current_avg_loss:.3f}',
+                    'success': f'{current_success_rate:.1%}',
+                    'steps': steps
+                })
             
             if batch_idx % 100 == 0:
                 self.writer.add_scalar('Train/Loss', loss, self.global_step)
@@ -234,16 +265,22 @@ class Trainer:
 
 
 def load_dataset(data_dir, limit=None):
+    print(f"Looking for data in: {data_dir}")
+    print(f"Directory exists: {Path(data_dir).exists()}")
+    
     files = sorted(Path(data_dir).glob("*.pt"))
+    print(f"Found {len(files)} .pt files")
+    
     if limit:
         files = files[:limit]
     
     dataset = []
     for f in files:
         try:
-            data = torch.load(f)
+            data = torch.load(f, weights_only=False)
             dataset.append(data)
-        except:
+        except Exception as e:
+            print(f"Error loading {f}: {e}")
             continue
     return dataset
 
@@ -255,6 +292,10 @@ def main():
     dataset = load_dataset(DATA_DIR, limit=5000)
     print(f"Loaded {len(dataset)} graphs")
     
+    if len(dataset) == 0:
+        print("ERROR: No data found. Run converter.py first.")
+        return
+    
     train_size = int(0.9 * len(dataset))
     train_dataset = dataset[:train_size]
     val_dataset = dataset[train_size:]
@@ -264,19 +305,30 @@ def main():
     model = NeuralPlannerGAT(in_channels=5, hidden_channels=64, heads=4, dropout=0.2)
     trainer = Trainer(model, device, lr=0.001)
     
+    start_epoch = 0
+    resume_path = CHECKPOINT_DIR / "best_model.pt"
+    if resume_path.exists():
+        print(f"Resuming from checkpoint: {resume_path}")
+        start_epoch = trainer.load_checkpoint(resume_path) + 1
+        print(f"Resuming from epoch {start_epoch}")
+    
     num_epochs = 100
-    for epoch in range(num_epochs):
+    save_every = 5
+    
+    for epoch in range(start_epoch, num_epochs):
         avg_loss, components, success_rate = trainer.train_epoch(train_loader, epoch)
         
-        print(f"Epoch {epoch+1}/{num_epochs} | Loss: {avg_loss:.4f} | Success: {success_rate:.2%}")
+        print(f"\nEpoch {epoch+1}/{num_epochs} | Loss: {avg_loss:.4f} | Success: {success_rate:.2%}")
         print(f"  base={components['base']:.3f}, obstacle={components['obstacle']:.3f}, "
               f"revisit={components['revisit']:.3f}, progress={components['progress']:.3f}")
         
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % save_every == 0:
             trainer.save_checkpoint(epoch)
+            print(f"  Checkpoint saved to {CHECKPOINT_DIR}")
     
+    trainer.save_checkpoint(num_epochs - 1)
     trainer.writer.close()
-    print("Training completed!")
+    print(f"\nTraining completed! Best model saved to: {CHECKPOINT_DIR / 'best_model.pt'}")
 
 
 if __name__ == "__main__":
